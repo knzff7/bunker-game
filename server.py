@@ -132,6 +132,7 @@ class Lobby:
         self.vote_task = None
         self.first_phase_done = False
         self.bots: set = set()     # имена ботов
+        self.host_as_player = False
 
     def active_players(self):
         return [n for n, c in self.players.items() if not c["eliminated"]]
@@ -139,9 +140,10 @@ class Lobby:
     def public_card(self, card, is_self=False):
         if is_self:
             return {**card, "_is_self": True}
+        is_bot = card.get("is_bot", False)
         pub = {
             "name": card["name"], "eliminated": card["eliminated"],
-            "is_bot": card.get("is_bot", False),
+            "is_bot": is_bot,
             "_is_self": False, "revealed": card["revealed"],
             "secret_revealed": card["secret_revealed"],
             "boost_self_used": card["boost_self_used"],
@@ -149,11 +151,11 @@ class Lobby:
             "boost_self": None, "boost_group": None,
         }
         for f in CARD_FIELDS:
-            if card["revealed"][f] or card["eliminated"]:
+            if card["revealed"][f] or card["eliminated"] or is_bot:
                 pub[f] = card[f]
             else:
                 pub[f] = None
-        pub["secret"] = card["secret"] if (card["eliminated"] or card["secret_revealed"]) else None
+        pub["secret"] = card["secret"] if (card["eliminated"] or card["secret_revealed"] or is_bot) else None
         return pub
 
     def state_for(self, ws):
@@ -187,6 +189,7 @@ class Lobby:
             "total_fields": len(CARD_FIELDS),
             "first_phase_done": self.first_phase_done,
             "bots": list(self.bots),
+            "host_as_player": self.host_as_player,
         }
 
 
@@ -481,10 +484,18 @@ async def handle_message(ws, raw):
         if code not in lobbies: return
         lobby=lobbies[code]
         if lobby.connections.get(ws)!="__host__": await send_err(ws,"Только хост!"); return
-        if len(lobby.players)<2: await send_err(ws,"Минимум 2 игрока!"); return
+        if len(lobby.players)<1: await send_err(ws,"Нужен хотя бы 1 игрок!"); return
         lobby.catastrophe=pick(CATASTROPHES); lobby.scenario=pick(SCENARIOS)
         lobby.bunker=pick(BUNKERS); lobby.special=pick(SPECIAL_CONDITIONS) if random.random()>0.3 else ""
         lobby.phase="catastrophe"
+        # Ведущий тоже игрок?
+        host_as_player = msg.get("host_as_player", False)
+        lobby.host_as_player = host_as_player
+        if host_as_player:
+            host_name = msg.get("host_name", "Ведущий").strip() or "Ведущий"
+            if host_name not in lobby.players:
+                lobby.players[host_name] = generate_card(host_name)
+                log.info(f"{code}: ведущий {host_name} добавлен как игрок")
         names=list(lobby.players.keys()); random.shuffle(names)
         lobby.turn_order=names; lobby.current_turn_idx=0; lobby.discussion_phase=0
         log.info(f"Игра {code} началась. Порядок: {lobby.turn_order}")
