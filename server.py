@@ -648,7 +648,12 @@ async def handler(ws):
 async def main():
     port=int(os.environ.get("PORT",8765))
     log.info(f"Сервер запущен на 0.0.0.0:{port}")
-    async with websockets.serve(handler,"0.0.0.0",port):
+    async with websockets.serve(
+        handler, "0.0.0.0", port,
+        ping_interval=20,
+        ping_timeout=60,
+        close_timeout=10,
+    ):
         await asyncio.Future()
 
 if __name__=="__main__":
