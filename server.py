@@ -511,6 +511,19 @@ async def handle_message(ws, raw):
                 if not lobby.players[n]["eliminated"]: lobby.current_turn_idx=i; break
             await broadcast(lobby)
 
+    elif action=="advance_phase":
+        # Хост вручную переходит к следующей фазе (когда все сходили)
+        if code not in lobbies: return
+        lobby=lobbies[code]
+        if lobby.connections.get(ws)!="__host__": await send_err(ws,"Только хост!"); return
+        if lobby.phase!="discussion": return
+        active=[n for n in lobby.active_players()]
+        all_done=all(n in lobby.turns_done for n in active)
+        if not all_done: await send_err(ws,"Ещё не все сходили!"); return
+        if lobby.discussion_phase==0: lobby.first_phase_done=True
+        advance_phase(lobby)
+        await broadcast(lobby)
+
     elif action=="end_turn":
         if code not in lobbies: return
         lobby=lobbies[code]
