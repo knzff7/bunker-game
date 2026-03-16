@@ -7,29 +7,18 @@
   font-family: 'Inter', var(--font-ui), sans-serif;
 }
 
-/* ── Slideshow ── */
-.home__slides {
+/* ── Фоновая картинка ── */
+.home__bg {
   position: absolute; inset: 0; z-index: 0;
-}
-.home__slide {
-  position: absolute; inset: 0;
-  background-size: cover; background-position: center;
-  opacity: 0;
+  background-image: url('/bg.jpg');
+  background-size: cover;
+  background-position: center;
 }
 
-/* Артефакты — зернистость */
-.home__artifacts {
-  position: absolute; inset: 0; z-index: 1; pointer-events: none;
-  opacity: 0.06;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E");
-  animation: artifacts-flicker 0.15s steps(1) infinite;
-}
-@keyframes artifacts-flicker {
-  0%   { transform: translate(0,0); opacity: 0.05; }
-  25%  { transform: translate(-1px, 1px); opacity: 0.07; }
-  50%  { transform: translate(1px, -1px); opacity: 0.04; }
-  75%  { transform: translate(-1px, 0); opacity: 0.08; }
-  100% { transform: translate(0, 1px); opacity: 0.05; }
+/* Затемнение поверх картинки */
+.home__bg-overlay {
+  position: absolute; inset: 0; z-index: 1;
+  background: rgba(0, 0, 0, 0.65);
 }
 
 /* Сканлайны */
@@ -45,7 +34,7 @@
 .home__vignette {
   position: absolute; inset: 0; z-index: 3; pointer-events: none;
   background: radial-gradient(ellipse at 50% 50%,
-    transparent 30%, rgba(0,0,0,0.55) 70%, rgba(0,0,0,0.85) 100%);
+    transparent 30%, rgba(0,0,0,0.45) 70%, rgba(0,0,0,0.75) 100%);
 }
 
 /* ── Content ── */
@@ -166,7 +155,7 @@
   background: rgba(200,150,62,0.06);
 }
 
-/* Join by code — primary style */
+/* Join by code */
 .home__join-code-btn {
   width: 100%;
   font-size: 0.8rem;
