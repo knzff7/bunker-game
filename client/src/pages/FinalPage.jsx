@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
+import { useState, useEffect } from 'react';
 import { useGameStore } from '../store/gameStore';
-import { narratives } from '../data/narratives.js';
 
 const CHAR_KEYS = ["profession","biology","health","phobia","hobby","fact1","fact2","baggage"];
 const CHAR_LABELS = {
@@ -12,8 +12,75 @@ const CHAR_ICONS = {
   hobby:"🎯", fact1:"⭐", fact2:"🔒", baggage:"🎒",
 };
 
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || '';
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+
+function getTrait(player, key) {
+  const t = player?.traits?.[key];
+  return t?.value || (typeof t === 'string' ? t : '—');
+}
+
+function formatPlayerForAI(player) {
+  return `${player.name}:
+  - Профессия: ${getTrait(player, 'profession')}
+  - Биология: ${getTrait(player, 'biology')}
+  - Здоровье: ${getTrait(player, 'health')}
+  - Фобия: ${getTrait(player, 'phobia')}
+  - Хобби: ${getTrait(player, 'hobby')}
+  - Факт I: ${getTrait(player, 'fact1')}
+  - Факт II: ${getTrait(player, 'fact2')}
+  - Багаж: ${getTrait(player, 'baggage')}`;
+}
+
+async function generateNarrative(survivors, exiled, catastrophe) {
+  if (!GEMINI_API_KEY) {
+    return `Бункер запечатан. ${survivors.length} человек осталось внутри. Снаружи — катастрофа. Впереди — долгое ожидание.`;
+  }
+
+  const survivorsText = survivors.map(formatPlayerForAI).join('\n\n');
+  const exiledText = exiled.length > 0
+    ? exiled.map(formatPlayerForAI).join('\n\n')
+    : 'Никто не был изгнан.';
+
+  const prompt = `Ты — мрачный рассказчик постапокалиптической игры "Бункер". Напиши финальный нарратив для завершения игровой сессии.
+
+КАТАСТРОФА: ${catastrophe?.title || 'Неизвестная катастрофа'}
+Описание: ${catastrophe?.description || ''}
+Срок изоляции: ${catastrophe?.duration || 'неизвестно'}
+
+ВЫЖИВШИЕ (попали в бункер):
+${survivorsText}
+
+ИЗГНАННЫЕ (остались снаружи):
+${exiledText}
+
+Напиши атмосферный финальный текст на 4-6 абзацев. Учти:
+- Реалистично оцени шансы группы на выживание исходя из их профессий, здоровья и навыков
+- Упомяни конкретных игроков по имени и их характеристики
+- Отметь слабые места группы (фобии, болезни, конфликты)
+- Расскажи о судьбе изгнанных — что их ждёт снаружи
+- Стиль: мрачный, кинематографичный, без хэппи-энда, с долей горькой иронии
+- Пиши на русском языке
+- НЕ используй markdown, только чистый текст с абзацами`;
+
+  const response = await fetch(GEMINI_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.9, maxOutputTokens: 1024 },
+    }),
+  });
+
+  const data = await response.json();
+  return data?.candidates?.[0]?.content?.parts?.[0]?.text
+    || `Бункер запечатан. ${survivors.length} человек осталось внутри.`;
+}
+
 export default function FinalPage() {
   const { players, exiledPlayers, catastrophe, allDossiers } = useGameStore();
+  const [narrative, setNarrative] = useState('');
+  const [loading, setLoading] = useState(true);
 
   function getTraits(p) {
     return allDossiers[p.id] || p.traits || {};
@@ -22,10 +89,15 @@ export default function FinalPage() {
   const survivorsWithTraits = players.map(p => ({ ...p, traits: getTraits(p) }));
   const exiledWithTraits = exiledPlayers.map(p => ({ ...p, traits: getTraits(p) }));
 
-  const narrativeFn = narratives[catastrophe?.id];
-  const narrative = narrativeFn
-    ? narrativeFn(survivorsWithTraits, exiledWithTraits)
-    : `Бункер запечатан. ${players.length} человек осталось внутри. Снаружи — катастрофа. Впереди — долгое ожидание.`;
+  useEffect(() => {
+    setLoading(true);
+    generateNarrative(survivorsWithTraits, exiledWithTraits, catastrophe)
+      .then(text => { setNarrative(text); setLoading(false); })
+      .catch(() => {
+        setNarrative(`Бункер запечатан. ${players.length} человек осталось внутри. Снаружи — катастрофа. Впереди — долгое ожидание.`);
+        setLoading(false);
+      });
+  }, []);
 
   return (
     <div style={{ width:'100%', minHeight:'100%', background:'var(--bg)', padding:'40px 32px', position:'relative' }}>
@@ -50,10 +122,21 @@ export default function FinalPage() {
       <motion.div initial={{opacity:0}} animate={{opacity:1}} transition={{delay:0.3}}
         style={{maxWidth:760, margin:'0 auto 48px', background:'rgba(200,169,110,0.04)',
           border:'1px solid var(--accent-dim)', padding:28}}>
-        <div style={{fontFamily:'var(--font-ui)', fontSize:15, lineHeight:1.9,
-          color:'var(--text)', whiteSpace:'pre-line', letterSpacing:'0.02em'}}>
-          {narrative}
-        </div>
+        {loading ? (
+          <div style={{textAlign:'center', color:'var(--text-dim)', fontFamily:'var(--font-ui)',
+            fontSize:14, padding:'20px 0', letterSpacing:'0.1em'}}>
+            <motion.span
+              animate={{opacity:[0.4,1,0.4]}}
+              transition={{duration:1.5, repeat:Infinity}}>
+              ✍️ &nbsp; Составляем итоговый отчёт...
+            </motion.span>
+          </div>
+        ) : (
+          <div style={{fontFamily:'var(--font-ui)', fontSize:15, lineHeight:1.9,
+            color:'var(--text)', whiteSpace:'pre-line', letterSpacing:'0.02em'}}>
+            {narrative}
+          </div>
+        )}
       </motion.div>
 
       {/* Survivors */}
@@ -103,7 +186,6 @@ function DossierSection({ title, players, getTraits, color, borderColor, headerB
               style={{border:`1px solid ${borderColor}`, borderRadius:6, overflow:'hidden',
                 background:'var(--bg-card)'}}>
 
-              {/* Player name header */}
               <div style={{background:headerBg, padding:'10px 16px', borderBottom:`1px solid ${borderColor}`,
                 display:'flex', alignItems:'center', gap:10}}>
                 <span style={{fontFamily:'var(--font-display)', fontSize:17, color,
@@ -111,7 +193,6 @@ function DossierSection({ title, players, getTraits, color, borderColor, headerB
                 {p.isBot && <span style={{fontSize:12, opacity:0.6}}>🤖</span>}
               </div>
 
-              {/* Traits grid */}
               <div style={{padding:14, display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
                 {CHAR_KEYS.map(key => {
                   const trait = traits[key];
