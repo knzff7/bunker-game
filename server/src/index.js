@@ -749,60 +749,73 @@ function applySpecialEffect(room, playerId, effect, targetId) {
 
   switch (effect) {
     case "reroll_health": {
+      if (!player.revealed.includes("health")) return { ok: false, error: "Сначала раскройте карточку Здоровье" };
       const pool = room.cards.map(c => c.traits?.health).filter(Boolean);
       player.traits.health = randTrait(pool);
       return { ok: true, msg: "Здоровье изменено" };
     }
     case "reroll_profession": {
+      if (!player.revealed.includes("profession")) return { ok: false, error: "Сначала раскройте карточку Профессия" };
       const pool = room.cards.map(c => c.traits?.profession).filter(Boolean);
       player.traits.profession = randTrait(pool);
       return { ok: true, msg: "Профессия изменена" };
     }
     case "reroll_phobia": {
+      if (!player.revealed.includes("phobia")) return { ok: false, error: "Сначала раскройте карточку Фобия" };
       const pool = room.cards.map(c => c.traits?.phobia).filter(Boolean);
       player.traits.phobia = randTrait(pool);
       return { ok: true, msg: "Фобия изменена" };
     }
     case "reroll_baggage": {
+      if (!player.revealed.includes("baggage")) return { ok: false, error: "Сначала раскройте карточку Багаж" };
       const pool = room.cards.map(c => c.traits?.baggage).filter(Boolean);
       player.traits.baggage = randTrait(pool);
       return { ok: true, msg: "Багаж заменён" };
     }
     case "reroll_hobby": {
+      if (!player.revealed.includes("hobby")) return { ok: false, error: "Сначала раскройте карточку Хобби" };
       const pool = room.cards.map(c => c.traits?.hobby).filter(Boolean);
       player.traits.hobby = randTrait(pool);
       return { ok: true, msg: "Хобби изменено" };
     }
     case "reroll_fact1": {
+      if (!player.revealed.includes("fact1")) return { ok: false, error: "Сначала раскройте карточку Факт I" };
       const pool = room.cards.map(c => c.traits?.fact1).filter(Boolean);
       player.traits.fact1 = randTrait(pool);
       return { ok: true, msg: "Навык изменён" };
     }
     case "reroll_fact2": {
+      if (!player.revealed.includes("fact2")) return { ok: false, error: "Сначала раскройте карточку Факт II" };
       const pool = room.cards.map(c => c.traits?.fact2).filter(Boolean);
       player.traits.fact2 = randTrait(pool);
       return { ok: true, msg: "Секрет изменён" };
     }
     case "shuffle_health_others": {
-      if (others.length < 2) return { ok: false, error: "Недостаточно игроков" };
-      const pool = others.map(p => p.traits?.health).filter(Boolean);
+      // Перемешиваем здоровье только тех у кого оно раскрыто
+      const targets = others.filter(p => p.revealed.includes("health") && p.traits?.health);
+      if (targets.length < 1) return { ok: false, error: "Ни у кого не раскрыто Здоровье" };
+      const pool = targets.map(p => p.traits.health);
       const shuffled = [...pool].sort(() => Math.random() - 0.5);
-      others.forEach((p, i) => { if (p.traits && shuffled[i]) p.traits.health = shuffled[i]; });
-      return { ok: true, msg: "Здоровье всех перемешано" };
+      targets.forEach((p, i) => { p.traits.health = shuffled[i]; });
+      return { ok: true, msg: `Здоровье перемешано у ${targets.length} игроков` };
     }
     case "shuffle_profession_others": {
-      if (others.length < 2) return { ok: false, error: "Недостаточно игроков" };
-      const pool = others.map(p => p.traits?.profession).filter(Boolean);
+      // Перемешиваем профессии только тех у кого раскрыта профессия
+      const targets = others.filter(p => p.revealed.includes("profession") && p.traits?.profession);
+      if (targets.length < 1) return { ok: false, error: "Ни у кого не раскрыта Профессия" };
+      const pool = targets.map(p => p.traits.profession);
       const shuffled = [...pool].sort(() => Math.random() - 0.5);
-      others.forEach((p, i) => { if (p.traits && shuffled[i]) p.traits.profession = shuffled[i]; });
-      return { ok: true, msg: "Профессии всех перемешаны" };
+      targets.forEach((p, i) => { p.traits.profession = shuffled[i]; });
+      return { ok: true, msg: `Профессии перемешаны у ${targets.length} игроков` };
     }
     case "shuffle_hobby_others": {
-      if (others.length < 2) return { ok: false, error: "Недостаточно игроков" };
-      const pool = others.map(p => p.traits?.hobby).filter(Boolean);
+      // Перемешиваем хобби только тех у кого раскрыто хобби
+      const targets = others.filter(p => p.revealed.includes("hobby") && p.traits?.hobby);
+      if (targets.length < 1) return { ok: false, error: "Ни у кого не раскрыто Хобби" };
+      const pool = targets.map(p => p.traits.hobby);
       const shuffled = [...pool].sort(() => Math.random() - 0.5);
-      others.forEach((p, i) => { if (p.traits && shuffled[i]) p.traits.hobby = shuffled[i]; });
-      return { ok: true, msg: "Хобби всех перемешаны" };
+      targets.forEach((p, i) => { p.traits.hobby = shuffled[i]; });
+      return { ok: true, msg: `Хобби перемешано у ${targets.length} игроков` };
     }
     case "reveal_health_all": {
       // Временное раскрытие — только через событие, не в revealed
@@ -828,6 +841,8 @@ function applySpecialEffect(room, playerId, effect, targetId) {
       const tgt = targetId ? room.players.find(p => p.id === targetId)
         : room.players[(room.players.indexOf(player) + 1) % room.players.length];
       if (!tgt || tgt.id === player.id) return { ok: false, error: "Нет цели" };
+      if (!player.revealed.includes("baggage")) return { ok: false, error: "Сначала раскройте свой Багаж" };
+      if (!tgt.revealed.includes("baggage")) return { ok: false, error: `У ${tgt.name} ещё не раскрыт Багаж` };
       const tmp = player.traits.baggage;
       player.traits.baggage = tgt.traits?.baggage || tmp;
       if (tgt.traits) tgt.traits.baggage = tmp;
