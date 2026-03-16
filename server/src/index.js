@@ -27,9 +27,6 @@ function shuffle(arr) {
 
 const rooms = new Map();
 
-// Таймеры для отложенного удаления при дисконнекте
-const disconnectTimers = new Map();
-const DISCONNECT_GRACE_MS = 15000; // 15 секунд на переподключение
 
 function createRoom(hostSocketId, hostName) {
   const code = genCode();
@@ -68,7 +65,6 @@ function addPlayer(room, socketId, name, isHost = false) {
     cardId: null,
     traits: null,
     revealed: [],
-    online: true,
   });
 }
 
@@ -84,7 +80,6 @@ function addBot(room) {
     cardId: null,
     traits: null,
     revealed: [],
-    online: true,
   });
 }
 
@@ -105,7 +100,6 @@ function roomPublic(room) {
       isBot: p.isBot,
       cardId: p.cardId,
       revealed: p.revealed,
-      online: p.online !== false,
       revealedThisPhase: p.revealedThisPhase || 0,
       specialUsed:      p.specialUsed      || false,
       specialSelfUsed:  p.specialSelfUsed  || false,
@@ -121,6 +115,7 @@ function roomPublic(room) {
       picked: c.picked,
       pickedBy: c.pickedBy,
       pickedByName: c.pickedByName,
+      // traits intentionally omitted from public broadcast
     })),
     pickQueue: room.pickQueue,
     currentTurnIndex: room.currentTurnIndex,
@@ -211,7 +206,9 @@ function exilePlayer(room, playerId, tally) {
     const [exiled] = room.players.splice(idx, 1);
     room.exiled.push(exiled);
   }
+  // Убираем изгнанного из очереди ходов
   room.turnQueue = room.turnQueue.filter(id => id !== playerId);
+  // Корректируем индекс чтобы не выйти за пределы
   if (room.currentTurnIndex >= room.turnQueue.length) {
     room.currentTurnIndex = 0;
   }
@@ -219,12 +216,14 @@ function exilePlayer(room, playerId, tally) {
   broadcastRoom(room);
 }
 
+// Продвигает очередь, пропуская игроков которых уже нет в комнате
 function advanceTurn(room) {
   if (room.turnQueue.length === 0) return;
   room.currentTurnIndex++;
   if (room.currentTurnIndex >= room.turnQueue.length) {
     room.currentTurnIndex = 0;
   }
+  // Пропускаем тех кого уже нет среди живых
   let safety = 0;
   while (safety++ < room.turnQueue.length) {
     const id = room.turnQueue[room.currentTurnIndex];
@@ -240,6 +239,7 @@ function startDiscussion(room) {
   room.discussionPhase = 1;
   room.turnQueue = shuffle(room.players.map(p => p.id));
   room.currentTurnIndex = 0;
+  // Сбрасываем счётчики раскрытий
   for (const p of room.players) { p.revealedThisPhase = 0; }
   broadcastRoom(room);
 }
@@ -275,6 +275,7 @@ io.on("connection", socket => {
     const room = rooms.get(code?.toUpperCase());
     if (!room) return cb?.({ ok: false, error: "Комната не найдена" });
 
+    // В лобби — обычное подключение
     if (room.phase === "lobby") {
       if (room.players.filter(p => !p.isBot).length >= room.maxPlayers)
         return cb?.({ ok: false, error: "Комната заполнена" });
@@ -285,7 +286,9 @@ io.on("connection", socket => {
       return;
     }
 
+    // В активной игре — только до 3й фазы включительно
     if (room.phase === "discussion" && room.discussionPhase <= 3) {
+      // Создаём игрока и назначаем ему карточку из оставшихся
       const availableCard = room.cards?.find(c => !c.picked);
       if (!availableCard) return cb?.({ ok: false, error: "Нет свободных карточек" });
 
@@ -304,23 +307,27 @@ io.on("connection", socket => {
         specialSelfUsed: false,
         specialGroupUsed: false,
         specialUsed: false,
+        // Автоматически раскрываем карточки согласно текущей фазе
+        // Фаза 1 = 1 карточка, фаза 2 = 2 карточки и т.д.
         revealed: [],
-        revealedThisPhase: 1,
-        online: true,
+        revealedThisPhase: 1, // уже "сходил" в текущей фазе
       };
 
+      // Раскрываем карточки за прошедшие фазы
       const keysToReveal = ["profession","biology","health","phobia","hobby","fact1","fact2","baggage"];
-      const phasesCompleted = room.discussionPhase - 1;
+      const phasesCompleted = room.discussionPhase - 1; // сколько фаз уже прошло
       for (let i = 0; i < Math.min(phasesCompleted, keysToReveal.length); i++) {
         newPlayer.revealed.push(keysToReveal[i]);
       }
 
       room.players.push(newPlayer);
+      // Добавляем в конец очереди ходов
       room.turnQueue.push(socket.id);
 
       socket.join(code.toUpperCase());
       cb?.({ ok: true, code: code.toUpperCase(), room: roomPublic(room) });
 
+      // Отправляем traits новому игроку
       if (newPlayer.traits) {
         socket.emit("player:traits", {
           ...newPlayer.traits,
@@ -333,6 +340,7 @@ io.on("connection", socket => {
       return;
     }
 
+    // После 3й фазы — нельзя войти
     if (room.phase === "discussion" && room.discussionPhase > 3) {
       return cb?.({ ok: false, error: "Игра уже прошла 3 фазу, вход закрыт" });
     }
@@ -340,7 +348,6 @@ io.on("connection", socket => {
     return cb?.({ ok: false, error: "Нельзя войти в игру сейчас" });
   });
 
-  // ── Реконнект по имени + коду ──
   socket.on("lobby:rejoin", ({ code, name }, cb) => {
     const room = rooms.get(code?.toUpperCase());
     if (!room) return cb?.({ ok: false, error: "Комната не найдена" });
@@ -351,17 +358,7 @@ io.on("connection", socket => {
     if (!existingPlayer) return cb?.({ ok: false, error: "Игрок не найден" });
 
     const oldId = existingPlayer.id;
-
-    // Отменяем таймер удаления если он был
-    const timerKey = `${code}_${oldId}`;
-    if (disconnectTimers.has(timerKey)) {
-      clearTimeout(disconnectTimers.get(timerKey));
-      disconnectTimers.delete(timerKey);
-    }
-
-    // Обновляем socketId
     existingPlayer.id = socket.id;
-    existingPlayer.online = true;
     if (room.host === oldId) room.host = socket.id;
 
     room.turnQueue = room.turnQueue.map(id => id === oldId ? socket.id : id);
@@ -425,6 +422,7 @@ io.on("connection", socket => {
     room.pickQueue = shuffle(room.players.map(p => p.id));
     room.currentTurnIndex = 0;
 
+    // Назначаем карточки ВСЕМ игрокам (и ботам и людям) сразу при старте
     const availableAtStart = [...room.cards];
     for (const p of room.players) {
       const pool = availableAtStart.filter(c => !c.picked);
@@ -435,6 +433,7 @@ io.on("connection", socket => {
       bc.pickedByName = p.name;
       p.cardId = bc.id;
       p.traits = bc.traits || null;
+      // Две особые карточки — только людям, не ботам
       p.specialSelf  = p.isBot ? null : (bc.specialSelf  || null);
       p.specialGroup = p.isBot ? null : (bc.specialGroup || null);
       p.specialSelfUsed  = false;
@@ -443,10 +442,13 @@ io.on("connection", socket => {
       p.revealed = [];
     }
 
+    // Убираем всех из pickQueue (карточки уже розданы)
+    // Но оставляем очередь для "выбора на столе" — это теперь просто анимация подтверждения
     room.pickQueue = room.pickQueue.filter(id => !room.players.find(p => p.id === id && p.isBot));
 
     broadcastRoom(room);
 
+    // Отправляем каждому человеку его traits сразу
     for (const p of room.players) {
       if (!p.isBot && p.traits) {
         io.to(p.id).emit("player:traits", {
@@ -456,6 +458,7 @@ io.on("connection", socket => {
         });
       }
     }
+    // Хосту — traits всех ботов
     const botTraits = {};
     for (const p of room.players) {
       if (p.isBot && p.traits) botTraits[p.id] = p.traits;
@@ -464,6 +467,7 @@ io.on("connection", socket => {
       io.to(room.host).emit("bot:traits", botTraits);
     }
 
+    // Сразу переходим в discussion — экран выбора карточек убран
     startDiscussion(room);
   });
 
@@ -473,8 +477,10 @@ io.on("connection", socket => {
     const currentTurn = room.pickQueue[room.currentTurnIndex];
     if (currentTurn !== socket.id) return;
 
+    // Карточка уже назначена при старте — просто двигаем очередь
     room.currentTurnIndex++;
     broadcastRoom(room);
+    // Переотправляем traits на случай если потерялись
     const player = room.players.find(p => p.id === socket.id);
     if (player?.traits) socket.emit("player:traits", player.traits);
   });
@@ -490,8 +496,10 @@ io.on("connection", socket => {
     const player = room.players.find(p => p.id === currentTurn);
     if (!player || player.revealed.includes(traitKey)) return;
 
+    // Фаза 1 — только профессия
     if (room.discussionPhase === 1 && traitKey !== "profession") return;
 
+    // Каждый игрок может раскрыть максимум 1 карточку за фазу
     if (!player.revealedThisPhase) player.revealedThisPhase = 0;
     if (player.revealedThisPhase >= 1) return;
 
@@ -519,6 +527,7 @@ io.on("connection", socket => {
     const bot = room.players.find(p => p.id === botId && p.isBot);
     if (!bot) return;
     room.votes[botId] = targetId;
+    // Никогда не заканчиваем досрочно — всегда ждём таймер
     io.to(room.code).emit("voting:progress", {
       count: Object.keys(room.votes).length,
       total: room.players.length,
@@ -536,6 +545,8 @@ io.on("connection", socket => {
 
     if (room.phase === "discussion") {
       room.discussionPhase++;
+      // Очередь НЕ пересоздаём — она остаётся с начала игры
+      // Просто сбрасываем индекс на начало
       room.currentTurnIndex = 0;
       for (const p of room.players) { p.revealedThisPhase = 0; }
 
@@ -543,7 +554,8 @@ io.on("connection", socket => {
       const alive = room.players.length;
       const slots = room.bunkerSlots;
 
-      if (phase > 7 || alive <= slots) {
+      // Финал — если игроков ровно столько сколько мест (или меньше)
+      if (alive <= slots) {
         room.phase = "final";
         for (const p of [...room.players, ...room.exiled]) {
           if (p.traits) p.revealed = Object.keys(p.traits);
@@ -552,9 +564,42 @@ io.on("connection", socket => {
         return;
       }
 
-      if (phase === 4) { startVoting(room); return; }
-      if (phase === 8) { startVoting(room); return; }
-      if (phase >= 5 && alive > slots + 1) { startVoting(room); return; }
+      // Финал после фазы 8 (все фазы пройдены)
+      if (phase > 7) {
+        room.phase = "final";
+        for (const p of [...room.players, ...room.exiled]) {
+          if (p.traits) p.revealed = Object.keys(p.traits);
+        }
+        broadcastRoom(room);
+        return;
+      }
+
+      // Обязательное голосование в конце фазы 3
+      if (phase === 4) {
+        startVoting(room);
+        return;
+      }
+
+      // Обязательное голосование в конце фазы 7
+      if (phase === 8) {
+        startVoting(room);
+        return;
+      }
+
+      // Доп. голосования в фазах 4-6:
+      // Цель — к концу фазы 7 должно остаться slots+1 игроков
+      // После обязательного голосования фазы 3 осталось (alive) игроков
+      // Нужно выгнать ещё (alive - (slots+1)) человек за фазы 4-6
+      // Голосуем если: оставшихся кик >= оставшихся фаз до 7
+      if (phase >= 5 && phase <= 7) {
+        const targetBeforeFinal = slots + 1; // сколько должно остаться к фазе 7
+        const kicksNeeded = alive - targetBeforeFinal; // сколько ещё надо выгнать
+        const phasesLeft = 8 - phase; // сколько фаз осталось до обязательного (включая текущую)
+        if (kicksNeeded > 0 && kicksNeeded >= phasesLeft) {
+          startVoting(room);
+          return;
+        }
+      }
 
       broadcastRoom(room);
     }
@@ -572,6 +617,7 @@ io.on("connection", socket => {
     const voter = room.players.find(p => p.id === socket.id);
     if (!voter) return;
     room.votes[socket.id] = targetId;
+    // Никогда не заканчиваем досрочно — всегда ждём таймер
     const humanPlayers = room.players.filter(p => !p.isBot);
     io.to(room.code).emit("voting:progress", {
       count: Object.keys(room.votes).filter(id => !room.players.find(p=>p.id===id&&p.isBot)).length,
@@ -594,6 +640,7 @@ io.on("connection", socket => {
     const player = room.players.find(p => p.id === socket.id);
     if (!player) return cb?.({ ok: false });
 
+    // Определяем тип карточки
     const isSelf  = player.specialSelf?.effect  === effect;
     const isGroup = player.specialGroup?.effect === effect;
     if (!isSelf && !isGroup) return cb?.({ ok: false, error: "Нет такой карточки" });
@@ -619,37 +666,17 @@ io.on("connection", socket => {
   });
 
   socket.on("disconnect", () => {
-    console.log("disconnect", socket.id);
-
     for (const [code, room] of rooms.entries()) {
-      const player = room.players.find(p => p.id === socket.id);
-      if (player) {
-        // Помечаем как офлайн и даём 15 секунд на реконнект
-        player.online = false;
-        broadcastRoom(room);
-
-        const timerKey = `${code}_${socket.id}`;
-        const timer = setTimeout(() => {
-          disconnectTimers.delete(timerKey);
-
-          if (room.host === socket.id) {
-            // Хост не вернулся — закрываем комнату
-            io.to(code).emit("lobby:closed");
-            if (room.votingTimer) clearTimeout(room.votingTimer);
-            rooms.delete(code);
-          } else {
-            // Обычный игрок не вернулся — удаляем из комнаты
-            const idx = room.players.findIndex(p => p.id === socket.id);
-            if (idx !== -1) {
-              room.players.splice(idx, 1);
-              room.turnQueue = room.turnQueue.filter(id => id !== socket.id);
-              if (room.currentTurnIndex >= room.turnQueue.length) room.currentTurnIndex = 0;
-            }
-            broadcastRoom(room);
-          }
-        }, DISCONNECT_GRACE_MS);
-
-        disconnectTimers.set(timerKey, timer);
+      const idx = room.players.findIndex(p => p.id === socket.id);
+      if (idx !== -1) {
+        if (room.host === socket.id) {
+          io.to(code).emit("lobby:closed");
+          if (room.votingTimer) clearTimeout(room.votingTimer);
+          rooms.delete(code);
+        } else {
+          room.players.splice(idx, 1);
+          broadcastRoom(room);
+        }
         break;
       }
     }
@@ -685,6 +712,7 @@ function applySpecialEffect(room, playerId, effect, targetId) {
   if (!player) return { ok: false };
 
   const others = room.players.filter(p => p.id !== playerId && !p.isBot);
+  const allPlayers = room.players.filter(p => !p.isBot);
 
   function randTrait(arr) {
     return arr[Math.floor(Math.random() * arr.length)];
