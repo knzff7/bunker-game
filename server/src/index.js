@@ -554,8 +554,13 @@ io.on("connection", socket => {
       const alive = room.players.length;
       const slots = room.bunkerSlots;
 
-      // Финал — если игроков ровно столько сколько мест (или меньше)
-      if (alive <= slots) {
+      // Финал после фазы 8 (все фазы пройдены)
+      if (phase > 7) {
+        // Если ещё остались лишние — голосование
+        if (alive > slots) {
+          startVoting(room);
+          return;
+        }
         room.phase = "final";
         for (const p of [...room.players, ...room.exiled]) {
           if (p.traits) p.revealed = Object.keys(p.traits);
@@ -564,8 +569,8 @@ io.on("connection", socket => {
         return;
       }
 
-      // Финал после фазы 8 (все фазы пройдены)
-      if (phase > 7) {
+      // Финал — если игроков ровно столько сколько мест (или меньше)
+      if (alive <= slots) {
         room.phase = "final";
         for (const p of [...room.players, ...room.exiled]) {
           if (p.traits) p.revealed = Object.keys(p.traits);
@@ -588,13 +593,11 @@ io.on("connection", socket => {
 
       // Доп. голосования в фазах 4-6:
       // Цель — к концу фазы 7 должно остаться slots+1 игроков
-      // После обязательного голосования фазы 3 осталось (alive) игроков
-      // Нужно выгнать ещё (alive - (slots+1)) человек за фазы 4-6
       // Голосуем если: оставшихся кик >= оставшихся фаз до 7
       if (phase >= 5 && phase <= 7) {
-        const targetBeforeFinal = slots + 1; // сколько должно остаться к фазе 7
-        const kicksNeeded = alive - targetBeforeFinal; // сколько ещё надо выгнать
-        const phasesLeft = 8 - phase; // сколько фаз осталось до обязательного (включая текущую)
+        const targetBeforeFinal = slots + 1;
+        const kicksNeeded = alive - targetBeforeFinal;
+        const phasesLeft = 8 - phase;
         if (kicksNeeded > 0 && kicksNeeded >= phasesLeft) {
           startVoting(room);
           return;
@@ -776,10 +779,10 @@ function applySpecialEffect(room, playerId, effect, targetId) {
       return { ok: true, msg: "Хобби всех перемешаны" };
     }
     case "reveal_health_all": {
-      for (const p of room.players) {
-        if (!p.revealed.includes("health")) p.revealed.push("health");
-      }
-      return { ok: true, msg: "Здоровье всех раскрыто" };
+      // Временное раскрытие — только через событие, не в revealed
+      return { ok: true, msg: "Здоровье всех раскрыто", temporary: true,
+        tempData: { type: "reveal_all_health", players: room.players.map(p => ({ id: p.id, name: p.name, health: p.traits?.health })) }
+      };
     }
     case "reveal_random_other": {
       const target = targetId ? room.players.find(p => p.id === targetId)
@@ -789,8 +792,11 @@ function applySpecialEffect(room, playerId, effect, targetId) {
       const hidden = keys.filter(k => !target.revealed.includes(k));
       if (hidden.length === 0) return { ok: false, error: "Все карточки уже раскрыты" };
       const key = hidden[Math.floor(Math.random() * hidden.length)];
-      target.revealed.push(key);
-      return { ok: true, msg: `У ${target.name} раскрыта карточка` };
+      const traitVal = target.traits?.[key];
+      // Временное раскрытие — только для использующего игрока, не навсегда
+      return { ok: true, msg: `Временно раскрыта карточка у ${target.name}`, temporary: true,
+        tempData: { type: "reveal_single", targetName: target.name, key, trait: traitVal }
+      };
     }
     case "swap_bag_neighbor": {
       const tgt = targetId ? room.players.find(p => p.id === targetId)

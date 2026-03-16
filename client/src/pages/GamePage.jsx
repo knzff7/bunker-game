@@ -114,6 +114,7 @@ export default function GamePage() {
   const [newlyRevealed, setNewlyRevealed] = useState({});
   const [specialMsg, setSpecialMsg] = useState(null);
   const [showSpecialTarget, setShowSpecialTarget] = useState(false);
+  const [tempReveal, setTempReveal] = useState(null); // временное раскрытие только для себя
   const prevRevealedRef = useRef({});
   const prevVotingRef = useRef(false);
 
@@ -386,7 +387,13 @@ export default function GamePage() {
                               if (!canUse) return;
                               if (needsTarget) { setShowSpecialTarget(card.effect); return; }
                               useSpecial(card.effect, null, (res) => {
-                                setSpecialMsg(res.msg || res.error);
+                                if (res.ok && res.temporary && res.tempData) {
+                                  setTempReveal(res.tempData);
+                                  setTimeout(() => setTempReveal(null), 5000);
+                                  setSpecialMsg(res.msg);
+                                } else {
+                                  setSpecialMsg(res.msg || res.error);
+                                }
                                 setTimeout(() => setSpecialMsg(null), 3000);
                               });
                             }}
@@ -457,7 +464,13 @@ export default function GamePage() {
                     onClick={() => {
                       setShowSpecialTarget(false);
                       useSpecial(showSpecialTarget, p.id, (res) => {
-                        setSpecialMsg(res.msg || res.error);
+                        if (res.ok && res.temporary && res.tempData) {
+                          setTempReveal(res.tempData);
+                          setTimeout(() => setTempReveal(null), 5000);
+                          setSpecialMsg(res.msg);
+                        } else {
+                          setSpecialMsg(res.msg || res.error);
+                        }
                         setTimeout(() => setSpecialMsg(null), 3000);
                       });
                     }}>
@@ -545,6 +558,54 @@ export default function GamePage() {
                 </div>
               )}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Временное раскрытие (только для использующего) ── */}
+      <AnimatePresence>
+        {tempReveal && (
+          <motion.div className="modal-overlay" style={{zIndex:200}}
+            initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+            onClick={() => setTempReveal(null)}>
+            <motion.div className="special-target-modal"
+              initial={{opacity:0,scale:0.9}} animate={{opacity:1,scale:1}} exit={{opacity:0}}
+              onClick={e => e.stopPropagation()}
+              style={{maxWidth:400, textAlign:'center'}}>
+              <div style={{fontSize:28, marginBottom:8}}>👁</div>
+              <div className="special-target-modal__title" style={{marginBottom:16}}>
+                Временное раскрытие — только вы видите это
+              </div>
+              {tempReveal.type === 'reveal_single' && (
+                <div style={{padding:'12px 16px', border:'1px solid var(--accent-dim)', background:'rgba(200,169,110,0.06)', borderRadius:6}}>
+                  <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:6}}>{tempReveal.targetName}</div>
+                  <div style={{fontSize:13, fontWeight:600, color:'var(--accent)', textTransform:'uppercase', letterSpacing:'0.1em', marginBottom:4}}>
+                    {tempReveal.key}
+                  </div>
+                  <div style={{fontSize:15, color:'var(--text-primary)'}}>
+                    {tempReveal.trait?.value || tempReveal.trait || '—'}
+                  </div>
+                  {tempReveal.trait?.desc && (
+                    <div style={{fontSize:11, color:'var(--text-dim)', marginTop:4, fontStyle:'italic'}}>{tempReveal.trait.desc}</div>
+                  )}
+                </div>
+              )}
+              {tempReveal.type === 'reveal_all_health' && (
+                <div style={{display:'flex', flexDirection:'column', gap:8}}>
+                  {(tempReveal.players || []).map(p => (
+                    <div key={p.id} style={{padding:'8px 14px', border:'1px solid var(--accent-dim)', background:'rgba(200,169,110,0.06)', borderRadius:6, display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                      <span style={{fontSize:13, color:'var(--text-muted)'}}>{p.name}</span>
+                      <span style={{fontSize:13, fontWeight:600, color:'var(--text-primary)'}}>
+                        {p.health?.value || p.health || '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{marginTop:16, fontSize:11, color:'var(--text-dim)'}}>
+                Исчезнет через 5 сек · нажмите чтобы закрыть
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
