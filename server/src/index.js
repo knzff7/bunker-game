@@ -544,6 +544,10 @@ io.on("connection", socket => {
     }
 
     if (room.phase === "discussion") {
+      // Блокируем если не все игроки раскрыли карточку в этой фазе
+      const notReady = room.players.filter(p => (p.revealedThisPhase || 0) < 1);
+      if (notReady.length > 0) return;
+
       room.discussionPhase++;
       // Очередь НЕ пересоздаём — она остаётся с начала игры
       // Просто сбрасываем индекс на начало
