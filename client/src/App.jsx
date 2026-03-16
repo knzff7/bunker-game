@@ -20,13 +20,18 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
-      case 'home':        return <HomePage />;
-      case 'lobby':       return <LobbyPage />;
-      case 'card_pick':   return <CardPickPage />;
+      case 'home':          return <HomePage />;
+      case 'lobby':         return <LobbyPage />;
+      case 'card_pick':     return <CardPickPage />;
       case 'discussion':
-      case 'voting':      return <GamePage />;
-      case 'final':       return <FinalPage />;
-      default:            return <HomePage />;
+      case 'voting':        return <GamePage />;
+      case 'final':         return <FinalPage />;
+      case 'reconnecting':  return (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#fff', fontSize: 24 }}>
+          Восстанавливаем соединение...
+        </div>
+      );
+      default:              return <HomePage />;
     }
   };
 

@@ -59,6 +59,27 @@ function getSocket() {
   return _socket;
 }
 
+// ── Session persistence ────────────────────────────────
+const SESSION_KEY = 'bunker_session';
+
+function _saveSession(data) {
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(data)); } catch {}
+}
+
+function _loadSession() {
+  try { return JSON.parse(localStorage.getItem(SESSION_KEY)); } catch { return null; }
+}
+
+function _clearSession() {
+  try { localStorage.removeItem(SESSION_KEY); } catch {}
+}
+
+// Определяем начальную страницу — если есть сессия, показываем "reconnecting"
+function _getInitialPage() {
+  const session = _loadSession();
+  return session?.code && session?.name ? 'reconnecting' : 'home';
+}
+
 function shuffle(arr) {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -72,7 +93,7 @@ export const useGameStore = create((set, get) => ({
   // connection
   socket: null,
   connected: false,
-  page: 'home',
+  page: _getInitialPage(),
   playerName: '',
   roomCode: null,
 
@@ -132,6 +153,28 @@ export const useGameStore = create((set, get) => ({
 
     s.on('connect', () => {
       set({ connected: true, playerId: s.id });
+
+      // Пробуем восстановить сессию после реконнекта
+      const session = _loadSession();
+      if (session?.code && session?.name) {
+        set({ page: 'reconnecting' });
+        s.emit('lobby:rejoin', { code: session.code, name: session.name }, (res) => {
+          if (res?.ok) {
+            set({
+              roomCode: res.code,
+              isHost: res.room?.host === s.id,
+              players: res.room?.players || [],
+              myDossier: session.myDossier || null,
+              mySpecialSelf: session.mySpecialSelf || null,
+              mySpecialGroup: session.mySpecialGroup || null,
+            });
+          } else {
+            // Комната уже не существует
+            _clearSession();
+            set({ page: 'home' });
+          }
+        });
+      }
     });
 
     if (s.connected) {
@@ -221,7 +264,8 @@ export const useGameStore = create((set, get) => ({
       }
     });
 
-    s.on('lobby:closed', () => { // Комната закрыта — удаляем сессию
+    s.on('lobby:closed', () => {
+      _clearSession();
       set({ page: 'home', roomCode: null, notification: { type: 'error', text: 'Лобби закрыто' } });
     });
 
@@ -307,6 +351,7 @@ export const useGameStore = create((set, get) => ({
             bots: room?.bots || 0,
           },
         });
+        _saveSession({ code: res.code, name: playerName || 'Хост' });
         cb?.({ success: true });
       } else {
         cb?.({ success: false, error: res?.error || 'Ошибка создания комнаты' });
@@ -332,6 +377,7 @@ export const useGameStore = create((set, get) => ({
             bots: room?.bots || 0,
           },
         });
+        _saveSession({ code: res.code, name: playerName || 'Игрок' });
         cb?.({ success: true });
       } else {
         cb?.({ success: false, error: res?.error || 'Комната не найдена' });
